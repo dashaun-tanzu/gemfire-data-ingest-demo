@@ -1,0 +1,28 @@
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  endpoint:
+    health:
+      show-components: always
+      show-details: always
+
+server:
+  port: 8080
+
+spring:
+  data:
+    gemfire:
+      pool:
+        locators: localhost[10334]
+  datasource:
+    password: postgres
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+  jpa:
+    hibernate:
+      ddl-auto: create
+  threads:
+    virtual:
+      enabled: true
