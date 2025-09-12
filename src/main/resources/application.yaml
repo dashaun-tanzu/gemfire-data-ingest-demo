@@ -22,6 +22,11 @@ spring:
     password: postgres
     url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
+  docker:
+    compose:
+      enabled: false
+      file: compose.yaml
+      lifecycle-management: none
   jpa:
     hibernate:
       ddl-auto: create

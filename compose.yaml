@@ -35,7 +35,7 @@ services:
     depends_on:
       gemfire-locator-0:
         condition: service_healthy
-    command: gfsh start server --name=server-0 --locators=gemfire-locator-0[10334] --server-port=40405  --hostname-for-clients=localhost --start-rest-api --http-service-port=7070
+    command: sh -c "gfsh start server --name=server-0 --locators=gemfire-locator-0[10334] --server-port=40405  --hostname-for-clients=localhost --start-rest-api --http-service-port=7070 && sleep 5 && gfsh -e 'connect --locator=gemfire-locator-0[10334]' -e 'create region --name=Stores --type=REPLICATE --skip-if-exists=true' && tail -f /dev/null"
     environment:
       - ACCEPT_TERMS=y
     ports:
