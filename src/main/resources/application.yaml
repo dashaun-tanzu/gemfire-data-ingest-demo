@@ -14,6 +14,8 @@ server:
 spring:
   data:
     gemfire:
+      cache:
+        log-level: error
       pool:
         locators: localhost[10334]
   datasource:
