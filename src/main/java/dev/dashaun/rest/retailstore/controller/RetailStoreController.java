@@ -27,17 +27,28 @@ public class RetailStoreController {
     }
 
     @GetMapping("/load-gemfire")
-    public void loadGemfire(){
+    void loadGemfire(){
         csvLoader.gemfire(gemfireRepository);
     }
 
     @GetMapping("/load-jpa")
-    public void loadJpa(){
+    void loadJpa(){
         csvLoader.jpa(jpaRepository);
     }
 
     @GetMapping("/get-jpa-by-id/{id}")
-    public Optional<StoreJPA> jpaById(@PathVariable String id){
+    Optional<StoreJPA> jpaById(@PathVariable String id){
         return jpaRepository.findById(id);
     }
+
+    @GetMapping("/get-jpa-count")
+    Long jpaCount(){
+        return jpaRepository.count();
+    }
+
+    @GetMapping("/get-gemfire-count")
+    Long gemfireCount(){
+        return gemfireRepository.count();
+    }
+
 }

@@ -65,7 +65,7 @@ public class CSVLoader {
                 .State(row.getField("State"))
                 .Zip_Code(row.getField("Zip Code"))
                 .Square_Footage(row.getField("Square Footage"))
-                .Location(row.getField("Location"))
+                .Georeference(row.getField("Georeference"))
                 .build();
     }
 
@@ -85,7 +85,7 @@ public class CSVLoader {
                 .State(row.getField("State"))
                 .Zip_Code(row.getField("Zip Code"))
                 .Square_Footage(row.getField("Square Footage"))
-                .Location(row.getField("Location"))
+                .Georeference(row.getField("Georeference"))
                 .build();
     }
 }

@@ -13,7 +13,7 @@ services:
       - '5432:5432'
   gemfire-locator-0:
     image: gemfire/gemfire-all:10.1-jdk17
-    command: gfsh start locator --name=locator-0 --hostname-for-clients=localhost --J='-Dgemfire.jmx-manager-hostname-for-clients=localhost'
+    command: gfsh start locator --name=locator-0 --hostname-for-clients=gemfire-locator-0 --J='-Dgemfire.jmx-manager-hostname-for-clients=gemfire-locator-0'
     environment:
       - ACCEPT_TERMS=y
     ports:
@@ -30,12 +30,13 @@ services:
       start_interval: 5s
       start_period: 20s
       retries: 5
+    networks: [gemfire-cluster-networks]
   gemfire-server-0:
     image: gemfire/gemfire-all:10.1-jdk17
     depends_on:
       gemfire-locator-0:
         condition: service_healthy
-    command: sh -c "gfsh start server --name=server-0 --locators=gemfire-locator-0[10334] --server-port=40405  --hostname-for-clients=localhost --start-rest-api --http-service-port=7070 && sleep 5 && gfsh -e 'connect --locator=gemfire-locator-0[10334]' -e 'create region --name=Stores --type=REPLICATE --skip-if-exists=true' && tail -f /dev/null"
+    command: gfsh start server --name=server-0 --locators=gemfire-locator-0[10334] --server-port=40405  --hostname-for-clients=localhost --start-rest-api --http-service-port=7070
     environment:
       - ACCEPT_TERMS=y
     ports:
@@ -48,6 +49,7 @@ services:
       retries: 5
     links:
       - gemfire-locator-0
+    networks: [gemfire-cluster-networks]
   management-console:
     image: gemfire/gemfire-management-console:latest
     ports:
@@ -63,3 +65,7 @@ services:
         condition: service_healthy
     links:
       - gemfire-locator-0
+    networks: [gemfire-cluster-networks]
+networks:
+  gemfire-cluster-networks:
+    driver: bridge

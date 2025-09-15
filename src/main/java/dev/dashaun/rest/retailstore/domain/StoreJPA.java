@@ -24,7 +24,7 @@ public class StoreJPA {
     private String State;
     private String Zip_Code;
     private String Square_Footage;
-    private String Location;
+    private String Georeference;
 
     public StoreJPA() {
 

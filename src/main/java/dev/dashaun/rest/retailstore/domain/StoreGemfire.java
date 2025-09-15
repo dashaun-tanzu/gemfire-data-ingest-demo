@@ -5,7 +5,7 @@ import lombok.Builder;
 import org.springframework.data.gemfire.mapping.annotation.Region;
 
 @Builder
-@Region(name = "Stores")
+@Region(name = "stores")
 public class StoreGemfire {
     @Id
     private String License_Number;
@@ -22,5 +22,5 @@ public class StoreGemfire {
     private String State;
     private String Zip_Code;
     private String Square_Footage;
-    private String Location;
+    private String Georeference;
 }
