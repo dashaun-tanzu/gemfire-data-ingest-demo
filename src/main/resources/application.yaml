@@ -1,3 +1,7 @@
+logging:
+  level:
+    org.apache: ERROR
+    org.springframework.web: ERROR
 management:
   endpoints:
     web:
