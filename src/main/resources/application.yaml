@@ -11,7 +11,9 @@ management:
     health:
       show-components: always
       show-details: always
-
+  metrics:
+    enable:
+      jdbc: true
 server:
   port: 8080
 

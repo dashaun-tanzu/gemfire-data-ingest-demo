@@ -44,6 +44,118 @@ export TYPE_SPEED=100
 export DEMO_PROMPT="${GREEN}➜ ${CYAN}\W ${COLOR_RESET}"
 export PROMPT_TIMEOUT=5
 
+declare -a URLS=(
+    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-jpa"
+    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-gemfire"
+    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-jpa-count"
+    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-gemfire-count"
+)
+
+# URL labels for the chart (customize as needed)
+declare -a LABELS=(
+    "load-jpa"
+    "load-gemfire"
+    "get-jpa-count"
+    "get-gemfire-count"
+)
+
+# Colors for the chart
+declare -a COLORS=(
+    "█" "▓" "▒" "░"
+)
+
+# Function to extract TOTAL_TIME from micrometer metrics
+function extract_total_time() {
+   local url=$1
+   echo "Fetching metrics from: $url" >&2
+
+   # Use httpie to get JSON only (no headers) and handle any parsing issues
+   local response=$(http --json --print=b GET "$url" 2>/dev/null)
+
+   if [ $? -ne 0 ] || [ -z "$response" ]; then
+       echo "Error: Failed to fetch from $url" >&2
+       echo "0"
+       return
+   fi
+
+   # Debug: show first few characters of response
+   echo "Response preview: $(echo "$response" | head -c 50)..." >&2
+
+   # Extract TOTAL_TIME with better error handling
+   local total_time=$(echo "$response" | jq -r '
+       if type == "object" and has("measurements") then
+           .measurements[] |
+           select(.statistic == "TOTAL_TIME") |
+           .value
+       else
+           empty
+       end
+   ' 2>/dev/null)
+
+   if [ "$total_time" == "null" ] || [ -z "$total_time" ] || [ "$total_time" == "" ]; then
+       echo "Warning: TOTAL_TIME not found in response from $url" >&2
+       echo "0"
+   else
+       echo "$total_time"
+   fi
+}
+
+# Function to create a simple ASCII bar chart with better precision
+create_chart() {
+    local -a values=("$@")
+    local max_value=0
+    local max_width=40
+
+    # Find the maximum value for scaling
+    for value in "${values[@]}"; do
+        if (( $(echo "$value > $max_value" | bc -l) )); then
+            max_value=$value
+        fi
+    done
+
+    echo "Spring Micrometer TOTAL_TIME Comparison"
+    echo "========================================"
+    printf "Max value: %.6fs\n" "$max_value"
+    echo ""
+
+    # Create bars
+    for i in "${!values[@]}"; do
+        local value=${values[$i]}
+        local label=${LABELS[$i]}
+        local color=${COLORS[$i]}
+
+        # Calculate bar width (avoid division by zero)
+        local bar_width=0
+        if (( $(echo "$max_value > 0" | bc -l) )); then
+            bar_width=$(echo "scale=0; ($value / $max_value) * $max_width" | bc -l)
+            # Ensure minimum width of 1 for non-zero values
+            if (( $(echo "$value > 0 && $bar_width < 1" | bc -l) )); then
+                bar_width=1
+            fi
+        fi
+
+        # Create the bar
+        local bar=""
+        for ((j=0; j<bar_width; j++)); do
+            bar+="$color"
+        done
+
+        # Format display with appropriate precision based on value magnitude
+        local display_value
+        if (( $(echo "$value >= 10" | bc -l) )); then
+            display_value=$(printf "%.3f" "$value")
+        elif (( $(echo "$value >= 1" | bc -l) )); then
+            display_value=$(printf "%.4f" "$value")
+        elif (( $(echo "$value >= 0.001" | bc -l) )); then
+            display_value=$(printf "%.6f" "$value")
+        else
+            display_value=$(printf "%.9f" "$value")
+        fi
+
+        printf "%-20s │ %-42s %ss\n" "$label" "$bar" "$display_value"
+    done
+    echo ""
+}
 
 # Stop ANY & ALL Java Process...they could be Springboot running on our ports!
 function cleanUp {
@@ -70,10 +182,6 @@ function cleanUp {
 function talkingPoint() {
   wait
   clear
-}
-
-function talkingPointNoClear() {
-  wait
 }
 
 # Check if Java version is already installed
@@ -116,7 +224,7 @@ function dockerComposeUp {
 }
 
 function dockerComposeDown {
-  docker compose down
+  docker compose down --quiet > /dev/null 2>&1
 }
 
 # Switch to Java 25 and display version
@@ -135,7 +243,7 @@ function springBootStart {
 # Stop the Spring Boot application
 function springBootStop {
   displayMessage "Stop the Spring Boot application"
-  pei "./mvnw spring-boot:stop -Dspring-boot.stop.fork -Dfork=true"
+  pei "./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1"
 }
 
 # Display a message with a header
@@ -198,6 +306,26 @@ function gemfireCount {
   pei "time http :8080/get-gemfire-count"
 }
 
+capture_metrics() {
+# Collect metrics from all URLs
+    declare -a total_times=()
+
+    for i in "${!URLS[@]}"; do
+        local url=${URLS[$i]}
+        local label=${LABELS[$i]}
+
+        echo -n "[$label] "
+        local total_time=$(extract_total_time "$url")
+        total_times+=("$total_time")
+        echo "TOTAL_TIME: ${total_time}s"
+    done
+
+    echo ""
+
+    # Create comparison chart
+    create_chart "${total_times[@]}"
+}
+
 # Main execution flow
 
 cleanUp
@@ -210,12 +338,13 @@ talkingPoint
 springBootStart
 talkingPoint
 loadJPA
-talkingPointNoClear
+talkingPoint
 jpaCount
-talkingPointNoClear
+talkingPoint
 loadGemfire
-talkingPointNoClear
+talkingPoint
 gemfireCount
-talkingPointNoClear
+talkingPoint
+capture_metrics
 springBootStop
 dockerComposeDown
