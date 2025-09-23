@@ -382,7 +382,7 @@ display_comparison_chart() {
     echo ""
 }
 
-collect_and_display_metrics() {
+collect_metrics() {
     display_header "Collecting performance metrics..."
 
     local -a total_times=()
@@ -401,21 +401,26 @@ collect_and_display_metrics() {
 
     echo ""
 
-    # Create comparison charts
+    # Store metrics globally for display function
+    COLLECTED_TOTAL_TIMES=("${total_times[@]}")
+}
+
+display_metrics_analysis() {
+    display_header "Performance Analysis Results"
+
+    # Create comparison charts using collected metrics
     display_comparison_chart \
         "Data Loading Performance: JPA vs GemFire" \
-        "${METRICS_LABELS[0]}" "${total_times[0]}" \
-        "${METRICS_LABELS[1]}" "${total_times[1]}" \
+        "${METRICS_LABELS[0]}" "${COLLECTED_TOTAL_TIMES[0]}" \
+        "${METRICS_LABELS[1]}" "${COLLECTED_TOTAL_TIMES[1]}" \
         "${CHART_COLORS[0]}" "${CHART_COLORS[1]}"
 
     display_comparison_chart \
         "Query Performance: JPA vs GemFire" \
-        "${METRICS_LABELS[2]}" "${total_times[2]}" \
-        "${METRICS_LABELS[3]}" "${total_times[3]}" \
+        "${METRICS_LABELS[2]}" "${COLLECTED_TOTAL_TIMES[2]}" \
+        "${METRICS_LABELS[3]}" "${COLLECTED_TOTAL_TIMES[3]}" \
         "${CHART_COLORS[2]}" "${CHART_COLORS[3]}"
 }
-
-
 
 # =============================================================================
 # DEMO MAGIC SETUP
@@ -476,8 +481,11 @@ main() {
     run_gemfire_count_query
     pause_and_clear
 
-    # Results analysis
-    collect_and_display_metrics
+    # Metrics collection and analysis
+    collect_metrics
+    pause_and_clear
+
+    display_metrics_analysis
 
     # Cleanup
     stop_spring_boot
