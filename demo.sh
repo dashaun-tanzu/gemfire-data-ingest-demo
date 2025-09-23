@@ -1,350 +1,538 @@
 #!/usr/bin/env bash
 
-DEMO_START=$(date +%s)
+# =============================================================================
+# Spring Boot Performance Demo Script
+# Compares JPA vs GemFire performance for data loading and querying
+# =============================================================================
 
-# Java version configuration
+set -eo pipefail  # Exit on error, pipe failures (unbound vars disabled for SDKMAN compatibility)
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+DEMO_START=$(date +%s)
 JAVA25_VERSION="25-librca"
 
-# Function to check if a command exists
-check_dependency() {
-  local cmd=$1
-  local install_msg=$2
-  
-  if ! command -v "$cmd" &> /dev/null; then
-    echo "$cmd not found. $install_msg"
-    return 1
-  fi
-  return 0
-}
-
-# Check all required dependencies
-check_dependencies() {
-  local missing_deps=()
-  
-  # Check dependencies in parallel by storing results
-  check_dependency "vendir" "Please install vendir first." || missing_deps+=("vendir")
-  check_dependency "http" "Please install httpie first." || missing_deps+=("httpie")
-  check_dependency "bc" "Please install bc first." || missing_deps+=("bc")
-  check_dependency "git" "Please install git first." || missing_deps+=("git")
-  
-  if [ ${#missing_deps[@]} -gt 0 ]; then
-    echo "Missing dependencies: ${missing_deps[*]}"
-    exit 1
-  fi
-  
-  echo "All dependencies found."
-}
-
-# Load helper functions and set initial variables
-check_dependencies
-
-vendir sync
-. ./vendir/demo-magic/demo-magic.sh
-export TYPE_SPEED=100
-export DEMO_PROMPT="${GREEN}➜ ${CYAN}\W ${COLOR_RESET}"
-export PROMPT_TIMEOUT=5
-
-declare -a URLS=(
+# Metrics URLs for performance comparison
+METRICS_URLS=(
     "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-jpa"
     "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-gemfire"
     "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-jpa-count"
     "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-gemfire-count"
 )
 
-# URL labels for the chart (customize as needed)
-declare -a LABELS=(
-    "load-jpa"
-    "load-gemfire"
-    "get-jpa-count"
-    "get-gemfire-count"
+METRICS_LABELS=(
+    "JPA Data Loading"
+    "GemFire Data Loading"
+    "JPA Query Count"
+    "GemFire Query Count"
 )
 
-# Colors for the chart
-declare -a COLORS=(
-    "█" "▓" "▒" "░"
-)
+# Chart display configuration
+CHART_COLORS=("█" "▓" "▒" "░")
+CHART_WIDTH=40
 
-# Function to extract TOTAL_TIME from micrometer metrics
-function extract_total_time() {
-   local url=$1
-   echo "Fetching metrics from: $url" >&2
+# Color codes for output
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+BLUE='\033[1;34m'
+WHITE='\033[1;37m'
+CYAN='\033[1;36m'
+NC='\033[0m'
 
-   # Use httpie to get JSON only (no headers) and handle any parsing issues
-   local response=$(http --json --print=b GET "$url" 2>/dev/null)
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
-   if [ $? -ne 0 ] || [ -z "$response" ]; then
-       echo "Error: Failed to fetch from $url" >&2
-       echo "0"
-       return
-   fi
-
-   # Debug: show first few characters of response
-   echo "Response preview: $(echo "$response" | head -c 50)..." >&2
-
-   # Extract TOTAL_TIME with better error handling
-   local total_time=$(echo "$response" | jq -r '
-       if type == "object" and has("measurements") then
-           .measurements[] |
-           select(.statistic == "TOTAL_TIME") |
-           .value
-       else
-           empty
-       end
-   ' 2>/dev/null)
-
-   if [ "$total_time" == "null" ] || [ -z "$total_time" ] || [ "$total_time" == "" ]; then
-       echo "Warning: TOTAL_TIME not found in response from $url" >&2
-       echo "0"
-   else
-       echo "$total_time"
-   fi
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $*"
 }
 
-# Function to create a simple ASCII bar chart with better precision
-create_chart() {
-    local -a values=("$@")
-    local max_value=0
-    local max_width=40
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $*"
+}
 
-    # Find the maximum value for scaling
-    for value in "${values[@]}"; do
-        if (( $(echo "$value > $max_value" | bc -l) )); then
-            max_value=$value
-        fi
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $*" >&2
+}
+
+display_header() {
+    echo -e "\n${WHITE}#### $1${NC}"
+    echo ""
+}
+
+demo_wait_and_clear() {
+    log_info "Waiting for user input or timeout..."
+
+    # Ensure we're using demo-magic variables
+    echo "PROMPT_TIMEOUT is set to: $PROMPT_TIMEOUT"
+
+    # Call the wait function from demo-magic
+    if [[ "$PROMPT_TIMEOUT" == "0" ]]; then
+        read -rs
+    else
+        read -rst "$PROMPT_TIMEOUT" || true  # Don't fail on timeout
+    fi
+
+    log_info "Clearing screen and continuing..."
+    clear
+}
+
+# =============================================================================
+# DEPENDENCY MANAGEMENT
+# =============================================================================
+
+check_command_exists() {
+    local cmd="$1"
+    local install_msg="$2"
+
+    if ! command -v "$cmd" &> /dev/null; then
+        log_error "$cmd not found. $install_msg"
+        return 1
+    fi
+    return 0
+}
+
+verify_dependencies() {
+    log_info "Checking dependencies..."
+
+    local -a missing_deps=()
+    local -a required_commands=(
+        "vendir:Please install vendir first"
+        "http:Please install httpie first"
+        "bc:Please install bc first"
+        "git:Please install git first"
+        "jq:Please install jq first"
+    )
+
+    for cmd_info in "${required_commands[@]}"; do
+        local cmd="${cmd_info%%:*}"
+        local msg="${cmd_info#*:}"
+
+        check_command_exists "$cmd" "$msg" || missing_deps+=("$cmd")
     done
 
-    echo "Spring Micrometer TOTAL_TIME Comparison"
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        log_error "Missing dependencies: ${missing_deps[*]}"
+        exit 1
+    fi
+
+    log_success "All dependencies found"
+}
+
+# =============================================================================
+# JAVA & SDKMAN MANAGEMENT
+# =============================================================================
+
+initialize_sdkman() {
+    local sdkman_init="${SDKMAN_DIR:-$HOME/.sdkman}/bin/sdkman-init.sh"
+
+    if [[ ! -f "$sdkman_init" ]]; then
+        log_error "SDKMAN not found. Please install SDKMAN first."
+        exit 1
+    fi
+
+    # Disable strict mode for SDKMAN operations
+    set +eu
+    # shellcheck disable=SC1090
+    source "$sdkman_init"
+
+    log_info "Updating SDKMAN..."
+    sdk update
+    # Re-enable strict mode
+    set -e
+}
+
+install_java_if_needed() {
+    # Disable strict mode for SDKMAN operations
+    set +eu
+
+    if ! sdk list java | grep -q "$JAVA25_VERSION.*installed"; then
+        log_info "Installing Java $JAVA25_VERSION..."
+        sdk install java "$JAVA25_VERSION"
+    else
+        log_success "Java $JAVA25_VERSION already installed"
+    fi
+
+    # Re-enable strict mode
+    set -e
+}
+
+setup_java_environment() {
+    display_header "Setting up Java 25 environment"
+
+    # Disable strict mode for SDKMAN operations
+    set +eu
+    pei "sdk use java $JAVA25_VERSION"
+    set -e
+
+    pei "java -version"
+}
+
+# =============================================================================
+# PROCESS MANAGEMENT
+# =============================================================================
+
+cleanup_java_processes() {
+    local java_pids
+    java_pids=$(pgrep java || true)
+
+    if [[ -n "$java_pids" ]]; then
+        display_header "Stopping existing Java processes"
+
+        while [[ -n "$java_pids" ]]; do
+            log_info "Terminating Java processes: $java_pids"
+            pei "kill -9 $java_pids"
+            java_pids=$(pgrep java || true)
+        done
+    fi
+}
+
+# =============================================================================
+# DOCKER MANAGEMENT
+# =============================================================================
+
+start_docker_services() {
+    log_info "Starting Docker services..."
+    if ! docker compose up -d --remove-orphans; then
+        log_error "Failed to start Docker services"
+        return 1
+    fi
+
+    log_info "Waiting for services to be ready..."
+    sleep 5
+
+    # Wait for postgres to be ready
+    log_info "Checking Postgres connectivity..."
+    local postgres_ready=false
+    for i in {1..30}; do
+        if docker compose exec -T postgres pg_isready -U postgres &>/dev/null; then
+            postgres_ready=true
+            break
+        fi
+        echo -n "."
+        sleep 2
+    done
+
+    if [ "$postgres_ready" = true ]; then
+        echo " Postgres ready!"
+    else
+        log_error "Postgres failed to become ready after 60 seconds"
+        return 1
+    fi
+
+    # Give GemFire additional time to fully initialize
+    log_info "Allowing GemFire services to fully initialize..."
+    sleep 10
+
+    log_success "All Docker services are ready"
+}
+
+stop_docker_services() {
+    log_info "Stopping Docker services..."
+    docker compose down --quiet > /dev/null 2>&1
+}
+
+initialize_environment() {
+    docker compose down --quiet > /dev/null 2>&1 || true
+    clear
+}
+
+# =============================================================================
+# SPRING BOOT MANAGEMENT
+# =============================================================================
+
+start_spring_boot() {
+    display_header "Starting Spring Boot application..."
+    pei "./mvnw -q clean package spring-boot:start -Dfork=true -DskipTests 2>&1"
+}
+
+stop_spring_boot() {
+    display_header "Stopping Spring Boot application"
+    pei "./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1"
+}
+
+# =============================================================================
+# DEMO OPERATIONS
+# =============================================================================
+
+run_jpa_data_load() {
+    display_header "Loading data via Spring Data JPA to Postgres"
+    pei "time http :8080/load-jpa"
+}
+
+run_jpa_count_query() {
+    display_header "Querying record count from Postgres via JPA"
+    pei "time http :8080/get-jpa-count"
+}
+
+run_gemfire_data_load() {
+    display_header "Loading data via Spring for GemFire"
+    pei "time http :8080/load-gemfire"
+}
+
+run_gemfire_count_query() {
+    display_header "Querying record count from GemFire"
+    pei "time http :8080/get-gemfire-count"
+}
+
+# =============================================================================
+# METRICS COLLECTION AND ANALYSIS
+# =============================================================================
+
+extract_total_time_from_metrics() {
+    local url="$1"
+
+    # Log to stderr so it doesn't interfere with return value
+    echo "Fetching metrics from: $url" >&2
+
+    local response
+    if ! response=$(http --json --print=b GET "$url" 2>/dev/null); then
+        echo "Failed to fetch metrics from $url" >&2
+        echo "0"
+        return
+    fi
+
+    if [[ -z "$response" ]]; then
+        echo "Empty response from $url" >&2
+        echo "0"
+        return
+    fi
+
+    local total_time
+    total_time=$(echo "$response" | jq -r '
+        if type == "object" and has("measurements") then
+            .measurements[] |
+            select(.statistic == "TOTAL_TIME") |
+            .value
+        else
+            empty
+        end
+    ' 2>/dev/null)
+
+    if [[ "$total_time" == "null" || -z "$total_time" ]]; then
+        echo "TOTAL_TIME not found in response from $url" >&2
+        echo "0"
+    else
+        echo "$total_time"
+    fi
+}
+
+format_value_for_display() {
+    local value="$1"
+
+    if (( $(echo "$value >= 10" | bc -l) )); then
+        printf "%.3f" "$value"
+    elif (( $(echo "$value >= 1" | bc -l) )); then
+        printf "%.4f" "$value"
+    elif (( $(echo "$value >= 0.001" | bc -l) )); then
+        printf "%.6f" "$value"
+    else
+        printf "%.9f" "$value"
+    fi
+}
+
+calculate_percentage_change() {
+    local baseline="$1"
+    local comparison="$2"
+
+    if (( $(echo "$baseline > 0" | bc -l) )); then
+        echo "scale=2; (($comparison - $baseline) / $baseline) * 100" | bc -l
+    else
+        echo "0"
+    fi
+}
+
+create_performance_bar() {
+    local value="$1"
+    local max_value="$2"
+    local color="$3"
+
+    local bar_width=0
+    if (( $(echo "$max_value > 0" | bc -l) )); then
+        bar_width=$(echo "scale=0; ($value / $max_value) * $CHART_WIDTH" | bc -l)
+        # Ensure minimum width of 1 for non-zero values
+        if (( $(echo "$value > 0 && $bar_width < 1" | bc -l) )); then
+            bar_width=1
+        fi
+    fi
+
+    local bar=""
+    for ((i=0; i<bar_width; i++)); do
+        bar+="$color"
+    done
+
+    echo "$bar"
+}
+
+display_comparison_chart() {
+    local title="$1"
+    local label1="$2"
+    local value1="$3"
+    local label2="$4"
+    local value2="$5"
+    local color1="$6"
+    local color2="$7"
+
+    # Determine max value for scaling
+    local max_value="$value1"
+    if (( $(echo "$value2 > $max_value" | bc -l) )); then
+        max_value="$value2"
+    fi
+
+    echo -e "\n${WHITE}$title${NC}"
     echo "========================================"
     printf "Max value: %.6fs\n" "$max_value"
     echo ""
 
-    # Create bars
-    for i in "${!values[@]}"; do
-        local value=${values[$i]}
-        local label=${LABELS[$i]}
-        local color=${COLORS[$i]}
+    # Display first bar
+    local bar1
+    bar1=$(create_performance_bar "$value1" "$max_value" "$color1")
+    local display_value1
+    display_value1=$(format_value_for_display "$value1")
+    printf "%-20s │ %-42s %ss\n" "$label1" "$bar1" "$display_value1"
 
-        # Calculate bar width (avoid division by zero)
-        local bar_width=0
-        if (( $(echo "$max_value > 0" | bc -l) )); then
-            bar_width=$(echo "scale=0; ($value / $max_value) * $max_width" | bc -l)
-            # Ensure minimum width of 1 for non-zero values
-            if (( $(echo "$value > 0 && $bar_width < 1" | bc -l) )); then
-                bar_width=1
-            fi
-        fi
+    # Display second bar
+    local bar2
+    bar2=$(create_performance_bar "$value2" "$max_value" "$color2")
+    local display_value2
+    display_value2=$(format_value_for_display "$value2")
+    printf "%-20s │ %-42s %ss\n" "$label2" "$bar2" "$display_value2"
 
-        # Create the bar
-        local bar=""
-        for ((j=0; j<bar_width; j++)); do
-            bar+="$color"
-        done
+    # Calculate and display percentage change
+    local percentage_change
+    percentage_change=$(calculate_percentage_change "$value1" "$value2")
 
-        # Format display with appropriate precision based on value magnitude
-        local display_value
-        if (( $(echo "$value >= 10" | bc -l) )); then
-            display_value=$(printf "%.3f" "$value")
-        elif (( $(echo "$value >= 1" | bc -l) )); then
-            display_value=$(printf "%.4f" "$value")
-        elif (( $(echo "$value >= 0.001" | bc -l) )); then
-            display_value=$(printf "%.6f" "$value")
-        else
-            display_value=$(printf "%.9f" "$value")
-        fi
+    local change_color="$GREEN"
+    local change_text="faster"
 
-        printf "%-20s │ %-42s %ss\n" "$label" "$bar" "$display_value"
-    done
+    if (( $(echo "$percentage_change > 0" | bc -l) )); then
+        change_color="$RED"
+        change_text="slower"
+    else
+        # Make percentage positive for display (negative means faster/better)
+        percentage_change=$(echo "$percentage_change * -1" | bc -l)
+    fi
+
+    echo ""
+    printf "Performance Change: "
+    printf "${change_color}%.2f%% %s${NC}" "$percentage_change" "$change_text"
+    printf " (%s vs %s)\n" "$label1" "$label2"
     echo ""
 }
 
-# Stop ANY & ALL Java Process...they could be Springboot running on our ports!
-function cleanUp {
-	local npid=""
+collect_and_display_metrics() {
+    display_header "Collecting performance metrics..."
 
-  npid=$(pgrep java)
-  
- 	if [ "$npid" != "" ] 
-		then
-  		
-  		displayMessage "*** Stopping Any Previous Existing SpringBoot Apps..."		
-			
-			while [ "$npid" != "" ]
-			do
-				echo "***KILLING OFF The Following: $npid..."
-		  	pei "kill -9 $npid"
-				npid=$(pgrep java)
-			done  
-		
-	fi
-}
+    local -a total_times=()
 
-# Function to pause and clear the screen
-function talkingPoint() {
-  wait
-  clear
-}
-
-# Check if Java version is already installed
-check_java_installed() {
-  local version=$1
-  sdk list java | grep -q "$version" && sdk list java | grep "$version" | grep -q "installed"
-}
-
-# Initialize SDKMAN and install required Java versions
-function initSDKman() {
-  local sdkman_init
-  sdkman_init="${SDKMAN_DIR:-$HOME/.sdkman}/bin/sdkman-init.sh"
-  if [[ -f "$sdkman_init" ]]; then
-    # shellcheck disable=SC1090
-    source "$sdkman_init"
-  else
-    echo "SDKMAN not found. Please install SDKMAN first."
-    exit 1
-  fi
-  
-  echo "Updating SDKMAN..."
-  sdk update
-  
-  if ! check_java_installed "$JAVA25_VERSION"; then
-    echo "Installing Java $JAVA25_VERSION..."
-    sdk install java "$JAVA25_VERSION"
-  else
-    echo "Java $JAVA25_VERSION already installed."
-  fi
-}
-
-# Prepare the working directory
-function init {
-  docker compose down
-  clear
-}
-
-function dockerComposeUp {
-  docker compose up -d --remove-orphans
-}
-
-function dockerComposeDown {
-  docker compose down --quiet > /dev/null 2>&1
-}
-
-# Switch to Java 25 and display version
-function useJava25 {
-  displayMessage "Using Java 25 because its awesome!"
-  pei "sdk use java $JAVA25_VERSION"
-  pei "java -version"
-}
-
-# Start the Spring Boot application
-function springBootStart {
-  displayMessage "Start the Spring Boot application, Wait For It...."
-  pei "./mvnw -q clean package spring-boot:start -Dfork=true -DskipTests 2>&1"
-}
-
-# Stop the Spring Boot application
-function springBootStop {
-  displayMessage "Stop the Spring Boot application"
-  pei "./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1"
-}
-
-# Display a message with a header
-function displayMessage() {
-  echo "#### $1"
-  echo ""
-}
-
-function statsSoFarTableColored {
-  displayMessage "Comparison of memory usage and startup times"
-  echo ""
-
-  # Define colors
-  local WHITE='\033[1;37m'
-  local GREEN='\033[1;32m'
-  local BLUE='\033[1;34m'
-  local NC='\033[0m' # No Color
-
-  # Headers (White)
-  printf "${WHITE}%-35s %-25s %-15s %s${NC}\n" "Configuration" "Startup Time (seconds)" "(MB) Used" "(MB) Savings"
-  echo -e "${WHITE}--------------------------------------------------------------------------------------------${NC}"
-
-  # Spring Boot 1.5 with Java 8 (Red - baseline)
-  MEM1=$(cat java8with1.5.log2)
-  START1=$(startupTime 'java8with1.5.log')
-  printf "${RED}%-35s %-25s %-15s %s${NC}\n" "Spring Boot 1.5 with Java 8" "$START1" "$MEM1" "-"
-
-  # Spring Boot 3.5 with Java17 (Green - improved)
-  MEM2=$(cat java17with3.5.log2)
-  PERC2=$(bc <<< "scale=2; 100 - ${MEM2}/${MEM1}*100")
-  START2=$(startupTime 'java17with3.5.log')
-  PERCSTART2=$(bc <<< "scale=2; 100 - ${START2}/${START1}*100")
-  printf "${GREEN}%-35s %-25s %-15s %s ${NC}\n" "Spring Boot 3.5 with Java 17" "$START2 ($PERCSTART2% faster)" "$MEM2" "$PERC2%"
-
-  echo -e "${WHITE}--------------------------------------------------------------------------------------------${NC}"
-  DEMO_STOP=$(date +%s)
-  DEMO_ELAPSED=$((DEMO_STOP - DEMO_START))
-  echo ""
-  echo ""
-  echo -e "${BLUE}Demo elapsed time: ${DEMO_ELAPSED} seconds${NC}"
-}
-
-function loadJPA {
-  displayMessage "*** Load all of the data via Spring Data JPA to Postgres...How long will this take?"
-  pei "time http :8080/load-jpa"
-}
-
-function jpaCount {
-  displayMessage "*** Get the number (count) of records from Postgres via JPA"
-  pei "time http :8080/get-jpa-count"
-}
-
-function loadGemfire {
-  displayMessage "*** Load the exact same set of data using Spring for Gemfire...How much faster was that?"
-  pei "time http :8080/load-gemfire"
-}
-
-function gemfireCount {
-  displayMessage "*** Get the number (count) of records from Gemfire...How much faster was that simple query?"
-  pei "time http :8080/get-gemfire-count"
-}
-
-capture_metrics() {
-# Collect metrics from all URLs
-    declare -a total_times=()
-
-    for i in "${!URLS[@]}"; do
-        local url=${URLS[$i]}
-        local label=${LABELS[$i]}
+    # Collect metrics from all URLs
+    for i in "${!METRICS_URLS[@]}"; do
+        local url="${METRICS_URLS[$i]}"
+        local label="${METRICS_LABELS[$i]}"
 
         echo -n "[$label] "
-        local total_time=$(extract_total_time "$url")
+        local total_time
+        total_time=$(extract_total_time_from_metrics "$url")
         total_times+=("$total_time")
         echo "TOTAL_TIME: ${total_time}s"
     done
 
     echo ""
 
-    # Create comparison chart
-    create_chart "${total_times[@]}"
+    # Create comparison charts
+    display_comparison_chart \
+        "Data Loading Performance: JPA vs GemFire" \
+        "${METRICS_LABELS[0]}" "${total_times[0]}" \
+        "${METRICS_LABELS[1]}" "${total_times[1]}" \
+        "${CHART_COLORS[0]}" "${CHART_COLORS[1]}"
+
+    display_comparison_chart \
+        "Query Performance: JPA vs GemFire" \
+        "${METRICS_LABELS[2]}" "${total_times[2]}" \
+        "${METRICS_LABELS[3]}" "${total_times[3]}" \
+        "${CHART_COLORS[2]}" "${CHART_COLORS[3]}"
 }
 
-# Main execution flow
 
-cleanUp
-initSDKman
-init
-dockerComposeUp
-talkingPoint
-useJava25
-talkingPoint
-springBootStart
-talkingPoint
-loadJPA
-talkingPoint
-jpaCount
-talkingPoint
-loadGemfire
-talkingPoint
-gemfireCount
-talkingPoint
-capture_metrics
-springBootStop
-dockerComposeDown
+
+# =============================================================================
+# DEMO MAGIC SETUP
+# =============================================================================
+
+setup_demo_magic() {
+    vendir sync
+
+    # shellcheck disable=SC1091
+    source ./vendir/demo-magic/demo-magic.sh
+
+    # Override demo-magic defaults AFTER sourcing
+    TYPE_SPEED=100
+    PROMPT_TIMEOUT=5
+    DEMO_PROMPT="${GREEN}➜ ${CYAN}\W ${NC}"
+}
+
+# =============================================================================
+# MAIN EXECUTION FLOW
+# =============================================================================
+
+main() {
+    log_info "Starting Spring Boot Performance Demo"
+
+    # Setup and verification
+    verify_dependencies
+    setup_demo_magic
+    cleanup_java_processes
+    initialize_sdkman
+    install_java_if_needed
+
+    # Environment preparation
+    initialize_environment
+    if ! start_docker_services; then
+        log_error "Failed to start Docker services. Exiting."
+        exit 1
+    fi
+    log_info "About to call first demo_wait_and_clear..."
+    demo_wait_and_clear
+
+    # Java setup
+    log_info "About to setup Java environment..."
+    setup_java_environment
+    log_info "Java setup complete, calling demo_wait_and_clear..."
+    demo_wait_and_clear
+
+    # Application lifecycle
+    start_spring_boot
+    demo_wait_and_clear
+
+    # Performance testing
+    run_jpa_data_load
+    demo_wait_and_clear
+
+    run_jpa_count_query
+    demo_wait_and_clear
+
+    run_gemfire_data_load
+    demo_wait_and_clear
+
+    run_gemfire_count_query
+    demo_wait_and_clear
+
+    # Results analysis
+    collect_and_display_metrics
+
+    # Cleanup
+    stop_spring_boot
+    stop_docker_services
+
+    log_success "Demo completed successfully!"
+}
+
+# =============================================================================
+# SCRIPT ENTRY POINT
+# =============================================================================
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
