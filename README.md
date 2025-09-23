@@ -6,10 +6,10 @@
 
 # Spring Data with JPA and Gemfire
 
-Sets up Rest endpoints to load ~3mb CSV file.
-Data is loaded 1 row at a time.
-Data can be stored into either JPA(Postgres) or Gemfire.
-The Docker Compose file provides running instances of both Postgres & Gemfire.
+- Sets up Rest endpoints to load ~3mb CSV file.
+- Data is loaded 1 row at a time.
+- Data can be stored into either JPA(Postgres) or Gemfire.
+- The Docker Compose file provides running instances of both Postgres & Gemfire.
 
 # Prerequisites
 
