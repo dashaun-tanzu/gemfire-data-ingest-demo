@@ -62,20 +62,12 @@ display_header() {
     echo ""
 }
 
-demo_wait_and_clear() {
-    log_info "Waiting for user input or timeout..."
-
-    # Ensure we're using demo-magic variables
-    echo "PROMPT_TIMEOUT is set to: $PROMPT_TIMEOUT"
-
-    # Call the wait function from demo-magic
+pause_and_clear() {
     if [[ "$PROMPT_TIMEOUT" == "0" ]]; then
         read -rs
     else
-        read -rst "$PROMPT_TIMEOUT" || true  # Don't fail on timeout
+        read -rst "$PROMPT_TIMEOUT" || true
     fi
-
-    log_info "Clearing screen and continuing..."
     clear
 }
 
@@ -200,32 +192,6 @@ start_docker_services() {
         return 1
     fi
 
-    log_info "Waiting for services to be ready..."
-    sleep 5
-
-    # Wait for postgres to be ready
-    log_info "Checking Postgres connectivity..."
-    local postgres_ready=false
-    for i in {1..30}; do
-        if docker compose exec -T postgres pg_isready -U postgres &>/dev/null; then
-            postgres_ready=true
-            break
-        fi
-        echo -n "."
-        sleep 2
-    done
-
-    if [ "$postgres_ready" = true ]; then
-        echo " Postgres ready!"
-    else
-        log_error "Postgres failed to become ready after 60 seconds"
-        return 1
-    fi
-
-    # Give GemFire additional time to fully initialize
-    log_info "Allowing GemFire services to fully initialize..."
-    sleep 10
-
     log_success "All Docker services are ready"
 }
 
@@ -250,7 +216,7 @@ start_spring_boot() {
 
 stop_spring_boot() {
     display_header "Stopping Spring Boot application"
-    pei "./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1"
+    ./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1
 }
 
 # =============================================================================
@@ -284,18 +250,13 @@ run_gemfire_count_query() {
 extract_total_time_from_metrics() {
     local url="$1"
 
-    # Log to stderr so it doesn't interfere with return value
-    echo "Fetching metrics from: $url" >&2
-
     local response
     if ! response=$(http --json --print=b GET "$url" 2>/dev/null); then
-        echo "Failed to fetch metrics from $url" >&2
         echo "0"
         return
     fi
 
     if [[ -z "$response" ]]; then
-        echo "Empty response from $url" >&2
         echo "0"
         return
     fi
@@ -312,7 +273,6 @@ extract_total_time_from_metrics() {
     ' 2>/dev/null)
 
     if [[ "$total_time" == "null" || -z "$total_time" ]]; then
-        echo "TOTAL_TIME not found in response from $url" >&2
         echo "0"
     else
         echo "$total_time"
@@ -493,31 +453,28 @@ main() {
         log_error "Failed to start Docker services. Exiting."
         exit 1
     fi
-    log_info "About to call first demo_wait_and_clear..."
-    demo_wait_and_clear
+    pause_and_clear
 
     # Java setup
-    log_info "About to setup Java environment..."
     setup_java_environment
-    log_info "Java setup complete, calling demo_wait_and_clear..."
-    demo_wait_and_clear
+    pause_and_clear
 
     # Application lifecycle
     start_spring_boot
-    demo_wait_and_clear
+    pause_and_clear
 
     # Performance testing
     run_jpa_data_load
-    demo_wait_and_clear
+    pause_and_clear
 
     run_jpa_count_query
-    demo_wait_and_clear
+    pause_and_clear
 
     run_gemfire_data_load
-    demo_wait_and_clear
+    pause_and_clear
 
     run_gemfire_count_query
-    demo_wait_and_clear
+    pause_and_clear
 
     # Results analysis
     collect_and_display_metrics

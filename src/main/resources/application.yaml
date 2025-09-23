@@ -1,7 +1,11 @@
 logging:
   level:
+    root: ERROR
     org.apache: ERROR
     org.springframework.web: ERROR
+    org.springframework.boot.StartupInfoLogger: INFO
+    org.springframework.boot.SpringApplication: INFO
+    org.springframework.context.support.DefaultLifecycleProcessor: INFO
 management:
   endpoints:
     web:
