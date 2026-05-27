@@ -12,7 +12,11 @@ set -eo pipefail  # Exit on error, pipe failures (unbound vars disabled for SDKM
 # =============================================================================
 
 DEMO_START=$(date +%s)
-JAVA25_VERSION="25.0.2-librca"
+
+# Java versions are sourced from .sdkmanrc (one `java=<version>` line per major).
+SDKMANRC="$(dirname "$0")/.sdkmanrc"
+JAVA25_VERSION=$(grep '^java=25\..*-librca' "$SDKMANRC" | cut -d'=' -f2)
+
 LANG=en_US.UTF-8
 LC_ALL=en_US.UTF-8
 
@@ -142,12 +146,9 @@ install_java_if_needed() {
     # Disable strict mode for SDKMAN operations
     set +eu
 
-    if ! sdk list java | grep -q "$JAVA25_VERSION.*installed"; then
-        log_info "Installing Java $JAVA25_VERSION..."
-        sdk install java "$JAVA25_VERSION"
-    else
-        log_success "Java $JAVA25_VERSION already installed"
-    fi
+    # Install any Java versions declared in .sdkmanrc that aren't yet present.
+    # `sdk env install` reads .sdkmanrc from cwd, so cd there in a subshell.
+    (cd "$(dirname "$SDKMANRC")" && sdk env install)
 
     # Re-enable strict mode
     set -e
@@ -199,11 +200,11 @@ start_docker_services() {
 
 stop_docker_services() {
     log_info "Stopping Docker services..."
-    docker compose down --quiet > /dev/null 2>&1
+    docker compose down > /dev/null 2>&1
 }
 
 initialize_environment() {
-    docker compose down --quiet > /dev/null 2>&1 || true
+    docker compose down > /dev/null 2>&1 || true
     clear
 }
 

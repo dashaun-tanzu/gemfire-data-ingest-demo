@@ -78,7 +78,7 @@ services:
     command: |
       sh -c "
         echo 'Configuring Region...' &&
-        gfsh -e 'connect --locator=gemfire-locator-0[10334]' -e 'create region --name=stores --type=REPLICATE --skip-if-exists=true' &&
+        gfsh -e 'connect --locator=gemfire-locator-0[10334]' -e 'create region --name=Stores --type=REPLICATE --skip-if-exists=true' &&
         echo 'Region configuration complete'
       "
     networks: [ gemfire-cluster-networks ]
