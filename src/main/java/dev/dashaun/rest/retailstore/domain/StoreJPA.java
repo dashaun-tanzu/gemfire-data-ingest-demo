@@ -2,10 +2,12 @@ package dev.dashaun.rest.retailstore.domain;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Getter;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 
 @Builder
+@Getter
 @Entity
 @AllArgsConstructor
 public class StoreJPA {

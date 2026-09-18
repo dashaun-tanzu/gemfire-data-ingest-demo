@@ -20,12 +20,18 @@ JAVA25_VERSION=$(grep '^java=25\..*-librca' "$SDKMANRC" | cut -d'=' -f2)
 LANG=en_US.UTF-8
 LC_ALL=en_US.UTF-8
 
-# Metrics URLs for performance comparison
+# The application binds to a random port (server.port=0) so it never conflicts
+# with other apps on 8080. APP_PORT/BASE_URL are resolved at startup.
+APP_LOG="${TMPDIR:-/tmp}/retailstore-app.log"
+APP_PORT=""
+BASE_URL=""
+
+# Metrics paths (prepended with $BASE_URL at collection time)
 METRICS_URLS=(
-    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-jpa"
-    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/load-gemfire"
-    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-jpa-count"
-    "http://localhost:8080/actuator/metrics/http.server.requests?tag=uri:/get-gemfire-count"
+    "/actuator/metrics/http.server.requests?tag=uri:/load-jpa"
+    "/actuator/metrics/http.server.requests?tag=uri:/load-gemfire"
+    "/actuator/metrics/http.server.requests?tag=uri:/get-jpa-count"
+    "/actuator/metrics/http.server.requests?tag=uri:/get-gemfire-count"
 )
 
 METRICS_LABELS=(
@@ -170,17 +176,16 @@ setup_java_environment() {
 # =============================================================================
 
 cleanup_java_processes() {
-    local java_pids
-    java_pids=$(pgrep java || true)
+    local app_pids
+    app_pids=$(pgrep -f "retailstore" || true)
 
-    if [[ -n "$java_pids" ]]; then
-        display_header "Stopping existing Java processes"
+    if [[ -n "$app_pids" ]]; then
+        display_header "Stopping existing application instances"
 
-        while [[ -n "$java_pids" ]]; do
-            log_info "Terminating Java processes: $java_pids"
-            pei "kill -9 $java_pids"
-            java_pids=$(pgrep java || true)
-        done
+        local pid_list
+        pid_list=$(echo "$app_pids" | tr '\n' ' ')
+        log_info "Terminating application processes: $pid_list"
+        pei "kill -9 $pid_list"
     fi
 }
 
@@ -212,14 +217,49 @@ initialize_environment() {
 # SPRING BOOT MANAGEMENT
 # =============================================================================
 
+wait_for_app_ready() {
+    local port=""
+    for i in $(seq 1 60); do
+        if [[ -z "$port" ]]; then
+            port=$(grep -oE "Tomcat started on port [0-9]+" "$APP_LOG" 2>/dev/null | grep -oE "[0-9]+" | tail -1)
+        fi
+        if [[ -n "$port" ]]; then
+            APP_PORT="$port"
+            if curl -sf "http://localhost:${APP_PORT}/actuator/health" 2>/dev/null | grep -q '"status":"UP"'; then
+                return 0
+            fi
+        fi
+        sleep 2
+    done
+    return 1
+}
+
 start_spring_boot() {
+    display_header "Building Spring Boot application..."
+    pei "./mvnw -q -DskipTests package"
+
     display_header "Starting Spring Boot application..."
-    pei "./mvnw -q clean package spring-boot:start -Dfork=true -DskipTests 2>&1"
+    : > "$APP_LOG"
+    pei "java -jar target/retailstore-0.0.1-SNAPSHOT.jar > \"$APP_LOG\" 2>&1 &"
+    APP_PID=$!
+
+    if ! wait_for_app_ready; then
+        log_error "Spring Boot application failed to start"
+        tail -30 "$APP_LOG" >&2
+        exit 1
+    fi
+
+    BASE_URL="http://localhost:${APP_PORT}"
+    log_success "Spring Boot application started on port ${APP_PORT} (pid ${APP_PID})"
 }
 
 stop_spring_boot() {
     display_header "Stopping Spring Boot application"
-    ./mvnw --quiet spring-boot:stop -Dspring-boot.stop.fork -Dfork=true > /dev/null 2>&1
+    if [[ -n "${APP_PID:-}" ]] && kill -0 "$APP_PID" 2>/dev/null; then
+        kill "$APP_PID" 2>/dev/null || true
+    else
+        pkill -f "retailstore-0.0.1-SNAPSHOT.jar" || true
+    fi
 }
 
 # =============================================================================
@@ -228,22 +268,22 @@ stop_spring_boot() {
 
 run_jpa_data_load() {
     display_header "Loading data via Spring Data JPA to Postgres"
-    pei "time http :8080/load-jpa"
+    pei "time http :${APP_PORT}/load-jpa"
 }
 
 run_jpa_count_query() {
     display_header "Querying record count from Postgres via JPA"
-    pei "time http :8080/get-jpa-count"
+    pei "time http :${APP_PORT}/get-jpa-count"
 }
 
 run_gemfire_data_load() {
     display_header "Loading data via Spring for GemFire"
-    pei "time http :8080/load-gemfire"
+    pei "time http :${APP_PORT}/load-gemfire"
 }
 
 run_gemfire_count_query() {
     display_header "Querying record count from GemFire"
-    pei "time http :8080/get-gemfire-count"
+    pei "time http :${APP_PORT}/get-gemfire-count"
 }
 
 # =============================================================================
@@ -392,7 +432,7 @@ collect_metrics() {
 
     # Collect metrics from all URLs
     for i in "${!METRICS_URLS[@]}"; do
-        local url="${METRICS_URLS[$i]}"
+        local url="${BASE_URL}${METRICS_URLS[$i]}"
         local label="${METRICS_LABELS[$i]}"
 
         echo -n "[$label] "
@@ -494,6 +534,12 @@ main() {
     stop_spring_boot
     stop_docker_services
 
+    DEMO_STOP=$(date +%s)
+    DEMO_ELAPSED=$((DEMO_STOP - DEMO_START))
+    echo ""
+    echo ""
+    echo -e "${BLUE}Demo elapsed time: ${DEMO_ELAPSED} seconds${NC}"
+    echo ""
     log_success "Demo completed successfully!"
 }
 

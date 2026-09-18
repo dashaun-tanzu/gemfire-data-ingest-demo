@@ -49,6 +49,18 @@ public class CSVLoader {
         }
     }
 
+    public void jpaBatch(CrudRepository<StoreJPA, String> repository) {
+        try {
+            List<NamedCsvRow> data = readDataIntoRows();
+            List<StoreJPA> stores = data.stream()
+                    .map(CSVLoader::convertToJPA)
+                    .collect(Collectors.toList());
+            repository.saveAll(stores);
+        } catch (IOException ioe) {
+            log.error(ioe.getMessage());
+        }
+    }
+
     public static StoreGemfire convertToGemfire(NamedCsvRow row) {
         return StoreGemfire.builder()
                 .County(row.getField("County"))

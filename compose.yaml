@@ -11,11 +11,17 @@ services:
       - 'POSTGRES_USER=postgres'
     ports:
       - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
   gemfire-locator-0:
     depends_on:
       postgres:
-        condition: service_started
-    image: gemfire/gemfire-all:10.1-jdk17
+        condition: service_healthy
+    image: gemfire/gemfire-all:10.3-jdk25
     command: gfsh start locator --name=locator-0 --hostname-for-clients=gemfire-locator-0 --J='-Dgemfire.jmx-manager-hostname-for-clients=gemfire-locator-0'
     environment:
       - ACCEPT_TERMS=y
@@ -28,14 +34,14 @@ services:
       - 7070
       - 1099
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7070/management/v1/members/locator-0"]
-      interval: 30s
-      start_interval: 5s
-      start_period: 20s
-      retries: 5
+      test: ['CMD-SHELL', '/gemfire/bin/gfsh -e "connect --locator=localhost[10334]" -e "status locator" > /dev/null 2>&1']
+      interval: 10s
+      timeout: 20s
+      start_period: 30s
+      retries: 10
     networks: [gemfire-cluster-networks]
   pdx-configurator:
-    image: gemfire/gemfire-all:10.1-jdk17
+    image: gemfire/gemfire-all:10.3-jdk25
     depends_on:
       gemfire-locator-0:
         condition: service_healthy
@@ -50,7 +56,7 @@ services:
     networks: [ gemfire-cluster-networks ]
     restart: "no"
   gemfire-server-0:
-    image: gemfire/gemfire-all:10.1-jdk17
+    image: gemfire/gemfire-all:10.3-jdk25
     depends_on:
       pdx-configurator:
         condition: service_completed_successfully
@@ -63,13 +69,14 @@ services:
       - "7071:7070"
       - "40405:40405"
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:7070/gemfire-api/v1/ping" ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ['CMD-SHELL', '/gemfire/bin/gfsh -e "connect --locator=gemfire-locator-0[10334]" -e "status server --name=server-0" > /dev/null 2>&1']
+      interval: 10s
+      timeout: 20s
+      start_period: 30s
+      retries: 10
     networks: [ gemfire-cluster-networks ]
   region-configurator:
-    image: gemfire/gemfire-all:10.1-jdk17
+    image: gemfire/gemfire-all:10.3-jdk25
     depends_on:
       gemfire-server-0:
         condition: service_healthy

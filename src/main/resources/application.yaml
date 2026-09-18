@@ -6,6 +6,8 @@ logging:
     org.springframework.boot.StartupInfoLogger: INFO
     org.springframework.boot.SpringApplication: INFO
     org.springframework.context.support.DefaultLifecycleProcessor: INFO
+    org.apache.geode.internal.cache.PoolFactoryImpl: OFF
+    org.springframework.boot.tomcat: INFO
 management:
   endpoints:
     web:
@@ -19,7 +21,7 @@ management:
     enable:
       jdbc: true
 server:
-  port: 8080
+  port: 0
 
 spring:
   data:
@@ -32,11 +34,6 @@ spring:
     password: postgres
     url: jdbc:postgresql://localhost:5432/postgres
     username: postgres
-  docker:
-    compose:
-      enabled: false
-      file: compose.yaml
-      lifecycle-management: none
   jpa:
     hibernate:
       ddl-auto: create

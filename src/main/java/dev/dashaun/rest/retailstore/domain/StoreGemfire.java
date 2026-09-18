@@ -2,9 +2,11 @@ package dev.dashaun.rest.retailstore.domain;
 
 import org.springframework.data.annotation.Id;
 import lombok.Builder;
+import lombok.Getter;
 import org.springframework.data.gemfire.mapping.annotation.Region;
 
 @Builder
+@Getter
 @Region(name = "Stores")
 public class StoreGemfire {
     @Id
